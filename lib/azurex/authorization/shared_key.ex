@@ -60,7 +60,7 @@ defmodule Azurex.Authorization.SharedKey do
 
   defp put_standard_headers(request, content_type, date) do
     headers =
-      if content_type,
+      if content_type && not has_content_type?(request.headers),
         do: [{"content-type", content_type} | request.headers],
         else: request.headers
 
@@ -71,6 +71,10 @@ defmodule Azurex.Authorization.SharedKey do
     ]
 
     struct(request, headers: headers)
+  end
+
+  defp has_content_type?(headers) do
+    Enum.any?(headers, fn {name, _value} -> String.downcase(name) == "content-type" end)
   end
 
   def format_date(%DateTime{zone_abbr: "UTC"} = date_time) do

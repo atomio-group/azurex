@@ -85,4 +85,41 @@ defmodule Azurex.Authorization.SharedKeyTest do
              }
     end
   end
+
+  describe "sign/2 content-type handling" do
+    @key "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+
+    defp content_types(request) do
+      for {name, value} <- request.headers, String.downcase(name) == "content-type", do: value
+    end
+
+    defp sign(headers) do
+      %HTTPoison.Request{
+        method: :put,
+        url: "https://example.com/sample-path",
+        body: "sample body",
+        headers: headers
+      }
+      |> SharedKey.sign(
+        storage_account_name: "dummystorageaccount",
+        storage_account_key: @key,
+        content_type: "application/octet-stream",
+        date: ~U[2021-01-01 00:00:00.000000Z]
+      )
+    end
+
+    test "adds the content-type when the request has none" do
+      assert content_types(sign([])) == ["application/octet-stream"]
+    end
+
+    test "does not duplicate a content-type the caller already set" do
+      assert content_types(sign([{"content-type", "application/octet-stream"}])) ==
+               ["application/octet-stream"]
+    end
+
+    test "does not duplicate a content-type set with different casing" do
+      assert content_types(sign([{"Content-Type", "application/octet-stream"}])) ==
+               ["application/octet-stream"]
+    end
+  end
 end
