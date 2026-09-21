@@ -10,10 +10,10 @@ defmodule Azurex.Authorization.SharedKey do
   def sign(request, opts \\ []) do
     storage_account_name = Keyword.fetch!(opts, :storage_account_name)
     storage_account_key = Keyword.fetch!(opts, :storage_account_key)
-    content_type = Keyword.get(opts, :content_type)
     date = Keyword.get(opts, :date, DateTime.utc_now())
 
-    request = put_standard_headers(request, content_type, date)
+    request = put_standard_headers(request, Keyword.get(opts, :content_type), date)
+    content_type = find_content_type(request.headers)
 
     method = get_method(request)
     size = get_size(request)
@@ -60,7 +60,7 @@ defmodule Azurex.Authorization.SharedKey do
 
   defp put_standard_headers(request, content_type, date) do
     headers =
-      if content_type && not has_content_type?(request.headers),
+      if content_type && !find_content_type(request.headers),
         do: [{"content-type", content_type} | request.headers],
         else: request.headers
 
@@ -73,8 +73,10 @@ defmodule Azurex.Authorization.SharedKey do
     struct(request, headers: headers)
   end
 
-  defp has_content_type?(headers) do
-    Enum.any?(headers, fn {name, _value} -> String.downcase(name) == "content-type" end)
+  defp find_content_type(headers) do
+    Enum.find_value(headers, fn {name, value} ->
+      String.downcase(name) == "content-type" && value
+    end)
   end
 
   def format_date(%DateTime{zone_abbr: "UTC"} = date_time) do
