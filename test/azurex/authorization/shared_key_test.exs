@@ -85,4 +85,59 @@ defmodule Azurex.Authorization.SharedKeyTest do
              }
     end
   end
+
+  describe "sign/2 content-type handling" do
+    @key "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+
+    defp content_types(request) do
+      for {name, value} <- request.headers, String.downcase(name) == "content-type", do: value
+    end
+
+    defp sign(headers, content_type \\ "application/octet-stream") do
+      %HTTPoison.Request{
+        method: :put,
+        url: "https://example.com/sample-path",
+        body: "sample body",
+        headers: headers
+      }
+      |> SharedKey.sign(
+        storage_account_name: "dummystorageaccount",
+        storage_account_key: @key,
+        content_type: content_type,
+        date: ~U[2021-01-01 00:00:00.000000Z]
+      )
+    end
+
+    defp authorization(request) do
+      Enum.find_value(request.headers, fn {name, value} -> name == "Authorization" && value end)
+    end
+
+    test "adds the content-type when the request has none" do
+      assert content_types(sign([])) == ["application/octet-stream"]
+    end
+
+    test "does not duplicate a content-type the caller already set" do
+      assert content_types(sign([{"content-type", "application/octet-stream"}])) ==
+               ["application/octet-stream"]
+    end
+
+    test "does not duplicate a content-type set with different casing" do
+      assert content_types(sign([{"Content-Type", "application/octet-stream"}])) ==
+               ["application/octet-stream"]
+    end
+
+    test "keeps the caller's content-type when opts disagree" do
+      assert content_types(sign([{"Content-Type", "text/plain"}])) == ["text/plain"]
+    end
+
+    test "signs the content-type the caller set, not the one in opts" do
+      assert authorization(sign([{"Content-Type", "text/plain"}])) ==
+               authorization(sign([], "text/plain"))
+    end
+
+    test "signs the caller's content-type when opts have none" do
+      assert authorization(sign([{"Content-Type", "text/plain"}], nil)) ==
+               authorization(sign([], "text/plain"))
+    end
+  end
 end
