@@ -7,8 +7,12 @@ defmodule Azurex.Blob do
 
   alias Azurex.Blob.{Block, Config}
   alias Azurex.Authorization.SharedKey
+  alias Azurex.Request
 
   @typep optional_string :: String.t() | nil
+
+  @default_max_concurrency 4
+  @default_block_timeout 60_000
 
   @spec list_containers(Config.config_overrides()) ::
           {:ok, String.t()}
@@ -22,7 +26,7 @@ defmodule Azurex.Blob do
       storage_account_name: Config.storage_account_name(overrides),
       storage_account_key: Config.storage_account_key(overrides)
     )
-    |> HTTPoison.request()
+    |> Request.request()
     |> case do
       {:ok, %{body: xml, status_code: 200}} -> {:ok, xml}
       {:ok, err} -> {:error, err}
@@ -43,6 +47,15 @@ defmodule Azurex.Blob do
   This argument can be either a valid string, or `nil`. A `content_type`
   argument of `nil` will result in the blob being assigned the default content
   type `"application/octet-stream"`.
+
+  ## The `opts` Argument
+
+  Only applies to `{:stream, _}` blobs, where each stream element is uploaded
+  as one block in parallel before the block list is committed.
+
+    * `:max_concurrency` - blocks uploaded at the same time. Defaults to `4`
+    * `:block_timeout` - milliseconds to wait for Azure to answer each block
+      upload attempt. Defaults to `60_000`
 
   ## Examples
 
@@ -79,31 +92,26 @@ defmodule Azurex.Blob do
           binary() | {:stream, Enumerable.t()},
           optional_string,
           Config.config_overrides(),
+          keyword,
           keyword
         ) ::
           :ok
           | {:error, HTTPoison.AsyncResponse.t() | HTTPoison.Error.t() | HTTPoison.Response.t()}
-  def put_blob(name, blob, content_type, overrides \\ [], params \\ [])
+  def put_blob(name, blob, content_type, overrides \\ [], params \\ [], opts \\ [])
 
-  def put_blob(name, {:stream, bitstream}, content_type, overrides, params) do
-    content_type = content_type || "application/octet-stream"
+  def put_blob(name, {:stream, bitstream}, content_type, overrides, params, opts) do
+    block_opts = [recv_timeout: Keyword.get(opts, :block_timeout, @default_block_timeout)]
 
     bitstream
-    |> Stream.transform(
-      fn -> [] end,
-      fn chunk, acc ->
-        with {:ok, block_id} <- Block.put_block(overrides, chunk, name, params) do
-          {[], [block_id | acc]}
-        end
-      end,
-      fn acc ->
-        Block.put_block_list(acc, overrides, name, content_type, params)
-      end
+    |> Task.async_stream(&Block.put_block(overrides, &1, name, params, block_opts),
+      max_concurrency: Keyword.get(opts, :max_concurrency, @default_max_concurrency),
+      timeout: :infinity
     )
-    |> Stream.run()
+    |> collect_block_ids()
+    |> commit_block_list(overrides, name, content_type, params)
   end
 
-  def put_blob(name, blob, content_type, overrides, params) do
+  def put_blob(name, blob, content_type, overrides, params, _opts) do
     content_type = content_type || "application/octet-stream"
     connection_params = Config.get_connection_params(overrides)
 
@@ -124,13 +132,25 @@ defmodule Azurex.Blob do
       storage_account_key: Config.storage_account_key(connection_params),
       content_type: content_type
     )
-    |> HTTPoison.request()
+    |> Request.request()
     |> case do
       {:ok, %{status_code: 201}} -> :ok
       {:ok, err} -> {:error, err}
       {:error, err} -> {:error, err}
     end
   end
+
+  defp collect_block_ids(block_results) do
+    Enum.reduce_while(block_results, {:ok, []}, fn
+      {:ok, {:ok, block_id}}, {:ok, block_ids} -> {:cont, {:ok, [block_id | block_ids]}}
+      {:ok, {:error, _} = error}, _acc -> {:halt, error}
+    end)
+  end
+
+  defp commit_block_list({:ok, block_ids}, overrides, name, content_type, params),
+    do: Block.put_block_list(block_ids, overrides, name, content_type, params)
+
+  defp commit_block_list(error, _overrides, _name, _content_type, _params), do: error
 
   @doc """
   Download a blob
@@ -161,7 +181,7 @@ defmodule Azurex.Blob do
           | {:error, HTTPoison.AsyncResponse.t() | HTTPoison.Error.t() | HTTPoison.Response.t()}
   def get_blob(name, overrides \\ [], params \\ []) do
     blob_request(name, overrides, :get, params)
-    |> HTTPoison.request()
+    |> Request.request()
     |> case do
       {:ok, %{body: blob, status_code: 200}} -> {:ok, blob}
       {:ok, err} -> {:error, err}
@@ -177,7 +197,7 @@ defmodule Azurex.Blob do
           | {:error, :not_found | HTTPoison.Error.t() | HTTPoison.Response.t()}
   def head_blob(name, overrides \\ [], params \\ []) do
     blob_request(name, overrides, :head, params)
-    |> HTTPoison.request()
+    |> Request.request()
     |> case do
       {:ok, %HTTPoison.Response{status_code: 200, headers: details}} -> {:ok, details}
       {:ok, %HTTPoison.Response{status_code: 404}} -> {:error, :not_found}
@@ -212,7 +232,7 @@ defmodule Azurex.Blob do
       storage_account_key: Config.storage_account_key(connection_params),
       content_type: content_type
     )
-    |> HTTPoison.request()
+    |> Request.request()
     |> case do
       {:ok, %HTTPoison.Response{status_code: 202} = resp} -> {:ok, resp}
       {:ok, %HTTPoison.Response{} = resp} -> {:error, resp}
@@ -224,7 +244,7 @@ defmodule Azurex.Blob do
           :ok | {:error, :not_found | HTTPoison.Error.t() | HTTPoison.Response.t()}
   def delete_blob(name, overrides \\ [], params \\ []) do
     blob_request(name, overrides, :delete, params)
-    |> HTTPoison.request()
+    |> Request.request(retry: false)
     |> case do
       {:ok, %HTTPoison.Response{status_code: 202}} -> :ok
       {:ok, %HTTPoison.Response{status_code: 404}} -> {:error, :not_found}
@@ -279,7 +299,7 @@ defmodule Azurex.Blob do
       storage_account_name: Config.storage_account_name(connection_params),
       storage_account_key: Config.storage_account_key(connection_params)
     )
-    |> HTTPoison.request()
+    |> Request.request()
     |> case do
       {:ok, %{body: xml, status_code: 200}} -> {:ok, xml}
       {:ok, err} -> {:error, err}
