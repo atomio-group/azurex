@@ -101,6 +101,34 @@ defmodule Azurex.BlobIntegrationTests do
     end
   end
 
+  describe "upload a streamed blob in parallel blocks" do
+    test "keeps block order for large binary content" do
+      blob_name = make_blob_name()
+      contents = :crypto.strong_rand_bytes(20 * 1_024 * 1_024 + 123)
+      {:ok, pid} = StringIO.open(contents)
+      body = IO.binstream(pid, 1_024 * 1_024)
+
+      assert Blob.put_blob(blob_name, {:stream, body}, nil, [], [], max_concurrency: 8) == :ok
+      assert Blob.get_blob(blob_name) == {:ok, contents}
+    end
+
+    test "returns error when a block fails" do
+      {:ok, pid} = StringIO.open(@sample_file_contents)
+      body = IO.binstream(pid, 8)
+
+      assert {:error, %HTTPoison.Response{status_code: 404}} =
+               Blob.put_blob(make_blob_name(), {:stream, body}, nil, "missingcontainer")
+    end
+
+    test "returns error when a block upload times out" do
+      {:ok, pid} = StringIO.open(:crypto.strong_rand_bytes(1_024 * 1_024))
+      body = IO.binstream(pid, 1_024 * 1_024)
+
+      assert Blob.put_blob(make_blob_name(), {:stream, body}, nil, [], [], timeout: 0) ==
+               {:error, {:block_upload_exit, :timeout}}
+    end
+  end
+
   describe "head blob" do
     test "using default container" do
       blob_name = make_blob_name()

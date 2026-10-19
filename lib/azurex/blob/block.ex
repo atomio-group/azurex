@@ -9,6 +9,7 @@ defmodule Azurex.Blob.Block do
   """
 
   alias Azurex.Authorization.SharedKey
+  alias Azurex.Request
   alias Azurex.Blob
   alias Azurex.Blob.Config
 
@@ -40,7 +41,7 @@ defmodule Azurex.Blob.Block do
       storage_account_key: Config.storage_account_key(connection_params),
       content_type: content_type
     )
-    |> HTTPoison.request()
+    |> Request.request()
     |> case do
       {:ok, %HTTPoison.Response{status_code: 201}} -> {:ok, block_id}
       {:ok, err} -> {:error, err}
@@ -89,7 +90,7 @@ defmodule Azurex.Blob.Block do
       storage_account_key: Config.storage_account_key(connection_params),
       content_type: content_type
     )
-    |> HTTPoison.request()
+    |> Request.request()
     |> case do
       {:ok, %HTTPoison.Response{status_code: 201}} -> :ok
       {:ok, err} -> {:error, err}

@@ -4,6 +4,7 @@ defmodule Azurex.Blob.Container do
   """
   alias Azurex.Blob.Config
   alias Azurex.Authorization.SharedKey
+  alias Azurex.Request
 
   def head_container(container, overrides \\ []) do
     connection_params = Config.get_connection_params(overrides)
@@ -17,7 +18,7 @@ defmodule Azurex.Blob.Container do
       storage_account_name: Config.storage_account_name(connection_params),
       storage_account_key: Config.storage_account_key(connection_params)
     )
-    |> HTTPoison.request()
+    |> Request.request()
     |> case do
       {:ok, %{status_code: 200, headers: headers}} -> {:ok, headers}
       {:ok, %HTTPoison.Response{status_code: 404}} -> {:error, :not_found}
@@ -39,7 +40,7 @@ defmodule Azurex.Blob.Container do
       storage_account_key: Config.storage_account_key(connection_params),
       content_type: "application/octet-stream"
     )
-    |> HTTPoison.request()
+    |> Request.request()
     |> case do
       {:ok, %{status_code: 201}} -> {:ok, container}
       {:ok, %HTTPoison.Response{status_code: 409}} -> {:error, :already_exists}
