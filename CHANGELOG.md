@@ -8,8 +8,8 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 ### Added/Changed
 
 - Added support for multiple Azure instances
-- Streamed `put_blob` uploads blocks in parallel (`:max_concurrency`, `:timeout` opts)
-- Retry requests on connection errors, 429 and 5xx responses
+- Streamed `put_blob` uploads blocks in parallel (`:max_concurrency`, `:block_timeout` opts)
+- Retry requests on connection errors, 429 and 5xx responses, except container create and blob delete
 
 ### Fixed
 

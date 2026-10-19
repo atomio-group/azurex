@@ -40,7 +40,7 @@ defmodule Azurex.Blob.Container do
       storage_account_key: Config.storage_account_key(connection_params),
       content_type: "application/octet-stream"
     )
-    |> Request.request()
+    |> Request.request(retry: false)
     |> case do
       {:ok, %{status_code: 201}} -> {:ok, container}
       {:ok, %HTTPoison.Response{status_code: 409}} -> {:error, :already_exists}

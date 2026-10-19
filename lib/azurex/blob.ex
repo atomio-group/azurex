@@ -54,7 +54,8 @@ defmodule Azurex.Blob do
   as one block in parallel before the block list is committed.
 
     * `:max_concurrency` - blocks uploaded at the same time. Defaults to `4`
-    * `:timeout` - milliseconds each block upload may take. Defaults to `60_000`
+    * `:block_timeout` - milliseconds to wait for Azure to answer each block
+      upload attempt. Defaults to `60_000`
 
   ## Examples
 
@@ -95,19 +96,16 @@ defmodule Azurex.Blob do
           keyword
         ) ::
           :ok
-          | {:error,
-             HTTPoison.AsyncResponse.t()
-             | HTTPoison.Error.t()
-             | HTTPoison.Response.t()
-             | {:block_upload_exit, term()}}
+          | {:error, HTTPoison.AsyncResponse.t() | HTTPoison.Error.t() | HTTPoison.Response.t()}
   def put_blob(name, blob, content_type, overrides \\ [], params \\ [], opts \\ [])
 
   def put_blob(name, {:stream, bitstream}, content_type, overrides, params, opts) do
+    block_opts = [recv_timeout: Keyword.get(opts, :block_timeout, @default_block_timeout)]
+
     bitstream
-    |> Task.async_stream(&Block.put_block(overrides, &1, name, params),
+    |> Task.async_stream(&Block.put_block(overrides, &1, name, params, block_opts),
       max_concurrency: Keyword.get(opts, :max_concurrency, @default_max_concurrency),
-      timeout: Keyword.get(opts, :timeout, @default_block_timeout),
-      on_timeout: :kill_task
+      timeout: :infinity
     )
     |> collect_block_ids()
     |> commit_block_list(overrides, name, content_type, params)
@@ -146,7 +144,6 @@ defmodule Azurex.Blob do
     Enum.reduce_while(block_results, {:ok, []}, fn
       {:ok, {:ok, block_id}}, {:ok, block_ids} -> {:cont, {:ok, [block_id | block_ids]}}
       {:ok, {:error, _} = error}, _acc -> {:halt, error}
-      {:exit, reason}, _acc -> {:halt, {:error, {:block_upload_exit, reason}}}
     end)
   end
 
@@ -247,7 +244,7 @@ defmodule Azurex.Blob do
           :ok | {:error, :not_found | HTTPoison.Error.t() | HTTPoison.Response.t()}
   def delete_blob(name, overrides \\ [], params \\ []) do
     blob_request(name, overrides, :delete, params)
-    |> Request.request()
+    |> Request.request(retry: false)
     |> case do
       {:ok, %HTTPoison.Response{status_code: 202}} -> :ok
       {:ok, %HTTPoison.Response{status_code: 404}} -> {:error, :not_found}

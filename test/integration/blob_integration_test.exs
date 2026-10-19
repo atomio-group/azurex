@@ -124,8 +124,8 @@ defmodule Azurex.BlobIntegrationTests do
       {:ok, pid} = StringIO.open(:crypto.strong_rand_bytes(1_024 * 1_024))
       body = IO.binstream(pid, 1_024 * 1_024)
 
-      assert Blob.put_blob(make_blob_name(), {:stream, body}, nil, [], [], timeout: 0) ==
-               {:error, {:block_upload_exit, :timeout}}
+      assert {:error, %HTTPoison.Error{reason: :timeout}} =
+               Blob.put_blob(make_blob_name(), {:stream, body}, nil, [], [], block_timeout: 0)
     end
   end
 
